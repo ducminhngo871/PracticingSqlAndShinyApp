@@ -1,0 +1,383 @@
+---
+title: 'Assignment #4'
+output: 
+  html_document:
+    toc: true
+    toc_float: true
+    df_print: paged
+    code_download: true
+---
+
+```{r setup, include=FALSE}
+#knitr::opts_chunk$set(echo = TRUE, message=FALSE, warning=FALSE)
+```
+
+```{r libraries}
+library(tidyverse)         # for graphing and data cleaning
+library(dbplyr)            # for SQL query "cheating" - part of tidyverse but needs to be loaded separately
+library(mdsr)              # for accessing some databases - goes with Modern Data Science with R textbook
+library(RMySQL)            # for accessing MySQL databases
+library(RSQLite)           # for accessing SQLite databases
+theme_set(theme_minimal()) # Lisa's favorite theme
+library(gt)
+```
+
+When you finish the assignment, remove the `#` from the options chunk at the top, so that messages and warnings aren't printed. If you are getting errors in your code, add `error = TRUE` so that the file knits. I would recommend not removing the `#` until you are completely finished.
+
+## Put it on GitHub!        
+
+From now on, GitHub should be part of your routine when doing assignments. I recommend making it part of your process anytime you are working in R, but I'll make you show it's part of your process for assignments.
+
+The link for my Github is: https://github.com/ducminhngo871/PracticingSqlAndShinyApp
+
+**Task**: When you are finished with the assignment, post a link below to the GitHub repo for the assignment. Make sure the link goes to a spot in the repo where I can easily find this assignment. For example, if you have a website with a blog and post the assignment as a blog post, link to the post's folder in the repo. As an example, I've linked to my GitHub stacking material [here](https://github.com/llendway/ads_website/tree/master/_posts/2021-03-22-stacking).
+
+## SQL
+
+You will use the `airlines` data from the SQL database that I used in the example in the [tutorial](https://advanced-ds-in-r.netlify.app/posts/2021-03-29-sqlinr/). Be sure to include the chunk to connect to the database here. And, when you are finished, disconnect. You may need to reconnect throughout as it times out after a while.
+
+**Tasks**:
+
+1. Create a SQL chunk and an equivalent R code chunk that does the following: for each airport (with its name, not code), year, and month find the total number of departing flights, the distinct destinations to which they flew, the average length of the flight, the average distance of the flight, and the proportion of flights that arrived more than 20 minutes late. In the R code chunk, write this out to a dataset. (HINT: 1. start small! 2. you may want to do the R part first and use it to "cheat" into the SQL code).  
+
+R code chuunk: 
+
+```{r}
+con_air <- dbConnect(RMySQL::MySQL(), 
+                     dbname = "airlines", 
+                     host = "mdsr.cdc7tgkkqd0n.us-east-1.rds.amazonaws.com", 
+                     user = "mdsr_public", 
+                     password = "ImhsmflMDSwR")
+```
+
+```{r}
+dbListTables(con_air)
+```
+
+```{r}
+dbListFields(con_air, "flights")
+```
+
+Using SQL: 
+
+```{sql connection = con_air}
+SELECT 
+  month, 
+  year,
+  name,
+  n_departure_flights,
+  avg_air_time,
+  perc_delayed,
+  avg_distance
+FROM (SELECT 
+  month, 
+  year,
+  carrier, 
+  SUM(CASE WHEN cancelled > 0 THEN 0
+        ELSE 1 END) AS n_departure_flights, 
+  AVG(air_time) AS avg_air_time, 
+  AVG(CASE WHEN arr_delay > 20 THEN 1
+           ELSE 0 END) AS perc_delayed,
+  AVG(distance) AS avg_distance
+FROM (SELECT * FROM flights) fl
+GROUP BY month, year, carrier) smry
+INNER JOIN carriers AS c 
+  ON (smry.carrier = c.carrier)
+ORDER BY year, month DESC;
+```
+
+Using R Studio: 
+
+In here, I don't know how to make it work :((
+
+```{r}
+full_query <-
+  tbl(con_air, "flights") %>% 
+  group_by(month, year, carrier) %>% 
+  mutate(
+    n_departure_flights = sum(case_when (
+    cancelled > 0 ~ 0,
+    cancelled = 0 ~ 1)),
+    avg_air_time = mean(air_time),
+    avg_distance = mean(distance), 
+    perc_delayed = mean(case_when(
+      arr_delay > 20 ~ 1
+      arr_delay <= 20 ~ 0
+    ))
+  ) %>% 
+  select(year, month, n_departure_flights, avg_air_time, perc_delayed, avg_distance) %>% 
+  inner_join(tbl(con_air, "carriers"), 
+             by = c("carrier" = "carrier")) %>% 
+  arrange(desc(year, month))
+```
+
+```{r}
+full_query2 <- 
+  tbl(con_air,
+      sql("
+          SELECT 
+  month, 
+  year,
+  name,
+  n_departure_flights,
+  avg_air_time,
+  perc_delayed,
+  avg_distance
+FROM (SELECT 
+  month, 
+  year,
+  carrier, 
+  SUM(CASE WHEN cancelled > 0 THEN 0
+        ELSE 1 END) AS n_departure_flights, 
+  AVG(air_time) AS avg_air_time, 
+  AVG(CASE WHEN arr_delay > 20 THEN 1
+           ELSE 0 END) AS perc_delayed,
+  AVG(distance) AS avg_distance
+FROM (SELECT * FROM flights) fl
+GROUP BY month, year, carrier) smry
+INNER JOIN carriers AS c 
+  ON (smry.carrier = c.carrier)
+ORDER BY year, month DESC
+          ")
+      )
+
+full_query2
+```
+
+```{r}
+flight_data <- collect(full_query2)
+flight_data
+```
+
+  - With the dataset you wrote out, create a graph that helps illustrate the "worst" airports in terms of late arrivals. You have some freedom in how you define worst and you may want to consider some of the other variables you computed. Do some theming to make your graph look glamorous (those of you who weren't in my intro data science class this year may want to watch Will Chase's [Glamour of Graphics](https://www.youtube.com/watch?v=h5cTacaWE6I) talk for inspiration).  
+  
+```{r}
+flight_data_modify_by_year <- 
+  tbl(con_air,
+  sql("
+  SELECT 
+  year,
+  name,
+  n_flights,
+  avg_air_time,
+  perc_delayed,
+  avg_distance
+  FROM (SELECT
+  year,
+  carrier, 
+  COUNT(CASE WHEN cancelled > 0 THEN 0
+        ELSE 1 END) AS n_flights, 
+  AVG(air_time) AS avg_air_time, 
+  AVG(CASE WHEN arr_delay > 20 THEN 1
+           ELSE 0 END) AS perc_delayed,
+  AVG(distance) AS avg_distance
+FROM (SELECT * FROM flights) fl
+GROUP BY year, carrier) smry
+INNER JOIN carriers AS c 
+  ON (smry.carrier = c.carrier)
+ORDER BY year DESC
+          ")
+      )
+
+flight_data_modify_by_year
+  
+```
+
+```{r}
+flight_data_modify_by_year <- collect(flight_data_modify_by_year)
+flight_data_modify_by_year
+```
+
+  
+```{r}
+library(gghighlight)
+
+flight_data_modify_by_year %>% 
+  ggplot(aes(x = year,
+             y = perc_delayed, 
+             color = name)) +
+  geom_point() +
+  geom_line() +
+  gghighlight(mean(perc_delayed) > 0.18) +
+  labs(title = "Hawaiian and Spirit Airlines have the worst average arrival delay",
+       x = NULL,
+       y = "Percentage delayed flight") +
+  theme_minimal() +
+  theme(panel.grid.minor.x = element_blank(),
+        panel.grid.major.x = element_blank(), 
+        plot.title.position = "plot")
+```
+  
+  - Although your graph was truly inspirational, you've been requested to "boil it down to a few numbers." Some people just don't appreciate all that effort you put in. And, you need to use the already summarized data that you already pulled in from SQL. Create a table with 6 or fewer rows and 3 or fewer columns that summarizes which airport is the "worst" in terms of late arrivals. Be careful with your calculations. You may consider using the `kable`, `kableExtra`, or `gt` packages to make your table look truly spectacular.
+  
+  
+```{r}
+flight_data_table <- flight_data %>% 
+  select(name, perc_delayed) %>% 
+  group_by(name) %>% 
+  summarize(mean_perc_delayed = mean(perc_delayed)) %>% 
+  select(name, mean_perc_delayed) %>% 
+   arrange(desc(mean_perc_delayed))
+```
+
+```{r}
+table_gt <- head(flight_data_table, 5)
+```
+
+```{r}
+table_gt %>% 
+  mutate(percentage_delay = mean_perc_delayed * 100, 
+         airlines_names = name) %>% 
+  select(airlines_names, percentage_delay) %>% 
+  gt() %>% 
+  tab_header(
+    title = md("**Worst Late Arrival Airports**")
+  ) %>% 
+  fmt_number(
+    columns = vars(percentage_delay),
+    decimals = 2
+  )  %>% 
+  data_color(
+    columns = vars(percentage_delay),
+    colors = scales::col_numeric(
+      # custom defined values - notice that order matters!
+      palette = c("#ffffff", "#f2fbd2", "#c9ecb4", "#93d3ab", "#35b0ab"),
+      domain = NULL
+    )
+  )  %>% 
+  tab_style(
+    style = list(
+      cell_text(weight = "bold")),
+      locations = cells_column_labels(
+      columns = vars(airlines_names, percentage_delay)
+    )
+  ) %>% 
+  cols_label(
+    percentage_delay = md("**Percentage delay (%)**"),
+    airlines_names = md("**Airlines**")
+  )
+  
+```
+
+In here, we can see that over the period, Spirit Air Lines is the worst airlines in term of delay arrivals with 20.2 % of the flights coming late. We also follow with Jetblue of 19%, PSA of 18% and Frontier of 17.97%. 
+
+
+  
+2. Come up with your own interesting question that data in the airlines database can help you answer. Write a SQL query and equivalent R code chunk to extract the data you need and create an elegant graph to help answer the question. Be sure to write down the question so it is clear. 
+
+Question: Which company has flown the largest distance within the year? 
+
+```{sql connection = con_air}
+SELECT *
+FROM flights
+LIMIT 1000; 
+```
+```{sql connection = con_air}
+SELECT *
+FROM airports
+LIMIT 10; 
+```
+
+```{sql connection = con_air}
+SELECT *
+FROM carriers
+LIMIT 10; 
+```
+
+```{sql connection = con_air}
+SELECT *
+FROM planes
+LIMIT 10; 
+```
+
+```{sql connection = con_air}
+SELECT 
+  year,
+  name,
+  total_distance
+FROM (SELECT 
+  year,
+  carrier, 
+  COUNT(distance) AS total_distance 
+FROM flights fl
+GROUP BY year, carrier) smry
+INNER JOIN carriers AS c 
+  ON (smry.carrier = c.carrier)
+ORDER BY year DESC;
+```
+
+```{r}
+total_distance <- 
+  tbl(con_air,
+      sql("
+      SELECT 
+  year,
+  name,
+  total_distance
+FROM (SELECT 
+  year,
+  carrier, 
+  COUNT(distance) AS total_distance 
+FROM flights fl
+GROUP BY year, carrier) smry
+INNER JOIN carriers AS c 
+  ON (smry.carrier = c.carrier)
+ORDER BY year DESC"))
+
+
+total_distance   
+```
+```{r}
+total_distance <- collect(total_distance)
+```
+
+```{r}
+library(gghighlight)
+
+total_distance %>% 
+  ggplot(aes(x = year,
+             y = total_distance, 
+             color = name, 
+             group = name)) +
+  geom_point() +
+  geom_line() + 
+  gghighlight(max(total_distance) > 1000000) + 
+  labs(title = "Southwest Airlines has flown the largest distance over the period",
+       x = NULL,
+       y = "Total distance") +
+  theme_minimal() +
+  theme(panel.grid.minor.x = element_blank(),
+        panel.grid.major.x = element_blank(),
+        plot.title.position = "plot")
+
+```
+
+
+## Shiny app
+
+If you are new to Shiny apps or it's been awhile since you've made one, visit the Shiny links on our course [Resource](https://advanced-ds-in-r.netlify.app/resources.html) page. 
+
+Check out my Shiny tips [here](https://github.com/llendway/shiny_tips). 
+
+Everyone should watch the [Theming Shiny](https://youtu.be/b9WWNO4P2nY) talk by Carson Sievert so you can make your app look amazing.
+
+**Tasks:**
+
+* Set up a separate project and GitHub repo for this app. The app needs to be created in a file called *exactly* app.R that is also in the project folder.  
+* At the top of the file, load any libraries and data you will use in the app.  
+* Use whatever data you'd like and create an app. It doesn't have to be super fancy, BUT it needs to incorporate all three of the new techniques I showed in the [Shiny tips](https://github.com/llendway/shiny_tips) - `reactive()`, referencing variable names, and updating a UI input with other UI input. 
+* Use the `bslib` to theme your shiny app!  
+* Publish your app to [shinyapps.io](https://www.shinyapps.io/). There are instructions for doing that on the tutorial I linked to above.   
+* Write a paragraph or two describing your app on your website! Link to the app and your GitHub repository in your post. Include a link to your post here. 
+
+In here, I have created an app to show the total number of points for every NBA players. The app will show the progress of each player to reach their points currently throughout the season. 
+
+
+## Function Friday problems
+
+I will link to these separately. They will be posted by Tuesday.
+
+
+REMEMBER TO ADD YOUR GITHUB LINK AT THE TOP OF THE PAGE AND UNCOMMENT THE `knitr` OPTIONS.
+
+
