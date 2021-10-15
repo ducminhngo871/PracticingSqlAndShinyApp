@@ -1,5 +1,6 @@
 ---
 title: 'Assignment #4'
+author: "Duc Ngo"
 output: 
   html_document:
     toc: true
@@ -9,7 +10,7 @@ output:
 ---
 
 ```{r setup, include=FALSE}
-#knitr::opts_chunk$set(echo = TRUE, message=FALSE, warning=FALSE)
+knitr::opts_chunk$set(echo = TRUE, message=FALSE, warning=FALSE)
 ```
 
 ```{r libraries}
@@ -50,183 +51,119 @@ con_air <- dbConnect(RMySQL::MySQL(),
                      password = "ImhsmflMDSwR")
 ```
 
-```{r}
-dbListTables(con_air)
-```
-
-```{r}
-dbListFields(con_air, "flights")
-```
-
-Using SQL: 
-
-```{sql connection = con_air}
-SELECT 
-  month, 
-  year,
-  name,
-  n_departure_flights,
-  avg_air_time,
-  perc_delayed,
-  avg_distance
-FROM (SELECT 
-  month, 
-  year,
-  carrier, 
-  SUM(CASE WHEN cancelled > 0 THEN 0
-        ELSE 1 END) AS n_departure_flights, 
-  AVG(air_time) AS avg_air_time, 
-  AVG(CASE WHEN arr_delay > 20 THEN 1
-           ELSE 0 END) AS perc_delayed,
-  AVG(distance) AS avg_distance
-FROM (SELECT * FROM flights) fl
-GROUP BY month, year, carrier) smry
-INNER JOIN carriers AS c 
-  ON (smry.carrier = c.carrier)
-ORDER BY year, month DESC;
-```
-
 Using R Studio: 
 
-In here, I don't know how to make it work :((
+In here, running this query takes too much time for me (around 30 minutes each time I try to knit it). Therefore, just to save the time, I wil save the dataset for this question. The name of the dataset I am saving will be call airport_data. 
 
-```{r}
-full_query <-
+```{r eval = FALSE}
+a <-
   tbl(con_air, "flights") %>% 
-  group_by(month, year, carrier) %>% 
-  mutate(
-    n_departure_flights = sum(case_when (
+  inner_join(tbl(con_air, "airports"),
+             by = c("origin" = "faa")) %>%
+  filter(year == 2017) %>% 
+  # head(1000) %>% 
+  mutate(n_departure_flights = (case_when (
     cancelled > 0 ~ 0,
-    cancelled = 0 ~ 1)),
+    cancelled == 0 ~ 1)))%>%
+  group_by(name, year,month) %>% 
+  summarize(
+    total_flights = sum(n_departure_flights),
+    n_distinct_destination = n_distinct(dest),
     avg_air_time = mean(air_time),
-    avg_distance = mean(distance), 
-    perc_delayed = mean(case_when(
-      arr_delay > 20 ~ 1
-      arr_delay <= 20 ~ 0
-    ))
-  ) %>% 
-  select(year, month, n_departure_flights, avg_air_time, perc_delayed, avg_distance) %>% 
-  inner_join(tbl(con_air, "carriers"), 
-             by = c("carrier" = "carrier")) %>% 
-  arrange(desc(year, month))
+    avg_distance = mean(distance),
+    perc_delayed = mean(arr_delay > 20)) %>%
+  arrange(desc(month))
+
+a
+```
+
+```{r eval= FALSE}
+show_query(a)
+```
+
+In here, I will not run the query since it takes too much time to run the R code alone. It took me 30 minutes just waiting for the code to run. Therefore, I will comment the code. 
+
+However, since I use the show_query() function, this will run exactly as the R Code. 
+
+SQL Query: 
+```{sql connection = con_air}
+/*
+SELECT `name`, `year`, `month`, SUM(`n_departure_flights`) AS `total_flights`, COUNT(DISTINCT `dest`) AS `n_distinct_destination`, AVG(`air_time`) AS `avg_air_time`, AVG(`distance`) AS `avg_distance`, AVG(`arr_delay` > 20.0) AS `perc_delayed`
+FROM (SELECT `year`, `month`, `day`, `dep_time`, `sched_dep_time`, `dep_delay`, `arr_time`, `sched_arr_time`, `arr_delay`, `carrier`, `tailnum`, `flight`, `origin`, `dest`, `air_time`, `distance`, `cancelled`, `diverted`, `hour`, `minute`, `time_hour`, `name`, `lat`, `lon`, `alt`, `tz`, `dst`, `city`, `country`, (CASE
+WHEN (`cancelled` > 0.0) THEN (0.0)
+WHEN (`cancelled` = 0.0) THEN (1.0)
+END) AS `n_departure_flights`
+FROM (SELECT `year`, `month`, `day`, `dep_time`, `sched_dep_time`, `dep_delay`, `arr_time`, `sched_arr_time`, `arr_delay`, `carrier`, `tailnum`, `flight`, `origin`, `dest`, `air_time`, `distance`, `cancelled`, `diverted`, `hour`, `minute`, `time_hour`, `name`, `lat`, `lon`, `alt`, `tz`, `dst`, `city`, `country`
+FROM `flights` AS `LHS`
+INNER JOIN `airports` AS `RHS`
+ON (`LHS`.`origin` = `RHS`.`faa`)
+) `q01`
+WHERE (`year` = 2017.0)) `q02`
+GROUP BY `name`, `year`, `month`
+ORDER BY `month` DESC;
+*/
+```
+
+
+```{r eval= FALSE}
+airport_data <- collect(a)
+airport_data
+```
+
+```{r eval= FALSE}
+write.table(airport_data, file = "airport_data.csv",
+            sep = "\t", row.names = F)
 ```
 
 ```{r}
-full_query2 <- 
-  tbl(con_air,
-      sql("
-          SELECT 
-  month, 
-  year,
-  name,
-  n_departure_flights,
-  avg_air_time,
-  perc_delayed,
-  avg_distance
-FROM (SELECT 
-  month, 
-  year,
-  carrier, 
-  SUM(CASE WHEN cancelled > 0 THEN 0
-        ELSE 1 END) AS n_departure_flights, 
-  AVG(air_time) AS avg_air_time, 
-  AVG(CASE WHEN arr_delay > 20 THEN 1
-           ELSE 0 END) AS perc_delayed,
-  AVG(distance) AS avg_distance
-FROM (SELECT * FROM flights) fl
-GROUP BY month, year, carrier) smry
-INNER JOIN carriers AS c 
-  ON (smry.carrier = c.carrier)
-ORDER BY year, month DESC
-          ")
-      )
-
-full_query2
-```
-
-```{r}
-flight_data <- collect(full_query2)
-flight_data
+airport_data <- read_delim("airport_data.csv", 
+    delim = "\t", escape_double = FALSE, 
+    trim_ws = TRUE)
+airport_data
 ```
 
   - With the dataset you wrote out, create a graph that helps illustrate the "worst" airports in terms of late arrivals. You have some freedom in how you define worst and you may want to consider some of the other variables you computed. Do some theming to make your graph look glamorous (those of you who weren't in my intro data science class this year may want to watch Will Chase's [Glamour of Graphics](https://www.youtube.com/watch?v=h5cTacaWE6I) talk for inspiration).  
   
 ```{r}
-flight_data_modify_by_year <- 
-  tbl(con_air,
-  sql("
-  SELECT 
-  year,
-  name,
-  n_flights,
-  avg_air_time,
-  perc_delayed,
-  avg_distance
-  FROM (SELECT
-  year,
-  carrier, 
-  COUNT(CASE WHEN cancelled > 0 THEN 0
-        ELSE 1 END) AS n_flights, 
-  AVG(air_time) AS avg_air_time, 
-  AVG(CASE WHEN arr_delay > 20 THEN 1
-           ELSE 0 END) AS perc_delayed,
-  AVG(distance) AS avg_distance
-FROM (SELECT * FROM flights) fl
-GROUP BY year, carrier) smry
-INNER JOIN carriers AS c 
-  ON (smry.carrier = c.carrier)
-ORDER BY year DESC
-          ")
-      )
+most_delayed_airports <- airport_data %>% 
+  group_by(year, name) %>% 
+  summarize(perc_delayed_mean = mean(perc_delayed)) %>% 
+  arrange(desc(perc_delayed_mean)) %>% 
+  head(10)
 
-flight_data_modify_by_year
-  
+most_delayed_airports
 ```
-
-```{r}
-flight_data_modify_by_year <- collect(flight_data_modify_by_year)
-flight_data_modify_by_year
-```
-
   
 ```{r}
-library(gghighlight)
-
-flight_data_modify_by_year %>% 
-  ggplot(aes(x = year,
-             y = perc_delayed, 
-             color = name)) +
-  geom_point() +
-  geom_line() +
-  gghighlight(mean(perc_delayed) > 0.18) +
-  labs(title = "Hawaiian and Spirit Airlines have the worst average arrival delay",
-       x = NULL,
-       y = "Percentage delayed flight") +
-  theme_minimal() +
-  theme(panel.grid.minor.x = element_blank(),
-        panel.grid.major.x = element_blank(), 
-        plot.title.position = "plot")
+most_delayed_airports %>% 
+  ggplot(aes(y = reorder(name,perc_delayed_mean),
+             x = perc_delayed_mean)) +
+  geom_col(fill = "lightblue") +
+  # scale_x_discrete(expand = c(0,0), 
+  #                    labels = scales::percent) +
+  labs(x = NULL,
+       y = NULL,
+       title = "Which airlines had the largest % of flights that \nwere more than 20 minutes late from 2010-2017?") +
+  theme_minimal()
 ```
   
+In here, we can see that Sioux Gateway is the airport with the highest delay rate, followed by East Texas and St.Augustine. 
+
   - Although your graph was truly inspirational, you've been requested to "boil it down to a few numbers." Some people just don't appreciate all that effort you put in. And, you need to use the already summarized data that you already pulled in from SQL. Create a table with 6 or fewer rows and 3 or fewer columns that summarizes which airport is the "worst" in terms of late arrivals. Be careful with your calculations. You may consider using the `kable`, `kableExtra`, or `gt` packages to make your table look truly spectacular.
   
   
 ```{r}
-flight_data_table <- flight_data %>% 
-  select(name, perc_delayed) %>% 
-  group_by(name) %>% 
-  summarize(mean_perc_delayed = mean(perc_delayed)) %>% 
-  select(name, mean_perc_delayed) %>% 
-   arrange(desc(mean_perc_delayed))
+most_delayed_airports_top_5 <- most_delayed_airports %>% 
+  head(5)
 ```
 
 ```{r}
-table_gt <- head(flight_data_table, 5)
+table_gt <- head(most_delayed_airports_top_5, 5)
 ```
 
 ```{r}
 table_gt %>% 
-  mutate(percentage_delay = mean_perc_delayed * 100, 
+  mutate(percentage_delay = perc_delayed_mean * 100, 
          airlines_names = name) %>% 
   select(airlines_names, percentage_delay) %>% 
   gt() %>% 
@@ -259,99 +196,53 @@ table_gt %>%
   
 ```
 
-In here, we can see that over the period, Spirit Air Lines is the worst airlines in term of delay arrivals with 20.2 % of the flights coming late. We also follow with Jetblue of 19%, PSA of 18% and Frontier of 17.97%. 
+In here, we can see that over the period, Sioux Gateway is the worst airports in term of delay arrivals with 62.97 % of the flights coming late. We also follow with East Texas with 50% and St.Augustine with 36.43%
 
-
-  
 2. Come up with your own interesting question that data in the airlines database can help you answer. Write a SQL query and equivalent R code chunk to extract the data you need and create an elegant graph to help answer the question. Be sure to write down the question so it is clear. 
 
-Question: Which company has flown the largest distance within the year? 
+Question: Which company has flown the largest distance in 2017? 
 
-```{sql connection = con_air}
-SELECT *
-FROM flights
-LIMIT 1000; 
-```
-```{sql connection = con_air}
-SELECT *
-FROM airports
-LIMIT 10; 
-```
+```{r}
+sql_question <-
+  tbl(con_air, "flights") %>% 
+  inner_join(tbl(con_air, "carriers"),
+             by = c("carrier" = "carrier")) %>%
+  filter(year == 2017) %>% 
+  group_by(name) %>% 
+  summarize(
+    total_distance = sum(distance)) %>%
+  arrange(desc(total_distance))
 
-```{sql connection = con_air}
-SELECT *
-FROM carriers
-LIMIT 10; 
-```
-
-```{sql connection = con_air}
-SELECT *
-FROM planes
-LIMIT 10; 
-```
-
-```{sql connection = con_air}
-SELECT 
-  year,
-  name,
-  total_distance
-FROM (SELECT 
-  year,
-  carrier, 
-  COUNT(distance) AS total_distance 
-FROM flights fl
-GROUP BY year, carrier) smry
-INNER JOIN carriers AS c 
-  ON (smry.carrier = c.carrier)
-ORDER BY year DESC;
+sql_question
 ```
 
 ```{r}
-total_distance <- 
-  tbl(con_air,
-      sql("
-      SELECT 
-  year,
-  name,
-  total_distance
-FROM (SELECT 
-  year,
-  carrier, 
-  COUNT(distance) AS total_distance 
-FROM flights fl
-GROUP BY year, carrier) smry
-INNER JOIN carriers AS c 
-  ON (smry.carrier = c.carrier)
-ORDER BY year DESC"))
-
-
-total_distance   
+show_query(sql_question)
 ```
-```{r}
-total_distance <- collect(total_distance)
+
+
+```{sql connection = con_air}
+SELECT `name`, SUM(`distance`) AS `total_distance`
+FROM (SELECT `year`, `month`, `day`, `dep_time`, `sched_dep_time`, `dep_delay`, `arr_time`, `sched_arr_time`, `arr_delay`, `LHS`.`carrier` AS `carrier`, `tailnum`, `flight`, `origin`, `dest`, `air_time`, `distance`, `cancelled`, `diverted`, `hour`, `minute`, `time_hour`, `name`
+FROM `flights` AS `LHS`
+INNER JOIN `carriers` AS `RHS`
+ON (`LHS`.`carrier` = `RHS`.`carrier`)
+) `q01`
+WHERE (`year` = 2017.0)
+GROUP BY `name`
+ORDER BY `total_distance` DESC;
 ```
 
 ```{r}
-library(gghighlight)
-
-total_distance %>% 
-  ggplot(aes(x = year,
-             y = total_distance, 
-             color = name, 
-             group = name)) +
-  geom_point() +
-  geom_line() + 
-  gghighlight(max(total_distance) > 1000000) + 
-  labs(title = "Southwest Airlines has flown the largest distance over the period",
-       x = NULL,
-       y = "Total distance") +
-  theme_minimal() +
-  theme(panel.grid.minor.x = element_blank(),
-        panel.grid.major.x = element_blank(),
-        plot.title.position = "plot")
-
+sql_question %>% 
+  ggplot(aes(y = reorder(name,total_distance),
+             x = total_distance)) +
+  geom_col(fill = "lightblue") +
+  labs(x = NULL,
+       y = NULL,
+       title = "Which airlines had flown the most in 2017?") +
+  theme_minimal()
 ```
-
 
 ## Shiny app
 
@@ -370,7 +261,13 @@ Everyone should watch the [Theming Shiny](https://youtu.be/b9WWNO4P2nY) talk by 
 * Publish your app to [shinyapps.io](https://www.shinyapps.io/). There are instructions for doing that on the tutorial I linked to above.   
 * Write a paragraph or two describing your app on your website! Link to the app and your GitHub repository in your post. Include a link to your post here. 
 
-In here, I have created an app to show the total number of points for every NBA players. The app will show the progress of each player to reach their points currently throughout the season. 
+In here, I have created an app to show the total number of points for every NBA players. The app will show the progress of each player to reach their points currently throughout the season. In my app, you can see his points development as well as the table below to see how many seasons he is playing alongside with how many points the player has scored throughout the year.  
+
+Here is the link to my app: https://ducminhngo871.shinyapps.io/TotalPointsNBAPlayers/?_ga=2.70998032.163317143.1634274695-1503300505.1633014426
+
+Here is the link of my Github: 
+
+https://github.com/ducminhngo871/ShinyApp
 
 
 ## Function Friday problems
